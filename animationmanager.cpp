@@ -1,56 +1,66 @@
-// animationmanager.cpp
 #include "animationmanager.h"
 
 AnimationManager::AnimationManager(QObject *parent) : QObject(parent) {}
 
 void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPos) {
+    // Enable widget caching
+    toast->setAttribute(Qt::WA_TranslucentBackground);
+    toast->setAttribute(Qt::WA_OpaquePaintEvent);
+
     auto* opacity = new QGraphicsOpacityEffect(toast);
     toast->setGraphicsEffect(opacity);
 
-    // 创建动画序列
     auto* group = new QSequentialAnimationGroup(toast);
 
-    // 上移渐入动画
-    auto* moveIn = new QPropertyAnimation(toast, "geometry");
-    moveIn->setDuration(TOAST_DURATION);
+    // Optimize animation durations
+    const int fadeTime = 200;
+    const int pauseTime = 1000;
+
+    // Create single combined animation
     QRect startGeom = toast->geometry();
-    startGeom.moveCenter(centerPos + QPoint(0, 50));
+    startGeom.moveCenter(centerPos + QPoint(0, 30)); // Reduced movement distance
     QRect endGeom = startGeom;
     endGeom.moveCenter(centerPos);
+
+    // Combine position and opacity animations
+    auto* parallelIn = new QParallelAnimationGroup;
+
+    auto* moveIn = new QPropertyAnimation(toast, "geometry");
+    moveIn->setDuration(fadeTime);
     moveIn->setStartValue(startGeom);
     moveIn->setEndValue(endGeom);
-    moveIn->setEasingCurve(getCustomBounceEasing());
+    moveIn->setEasingCurve(QEasingCurve::OutCubic); // Simplified easing
 
     auto* fadeIn = new QPropertyAnimation(opacity, "opacity");
-    fadeIn->setDuration(TOAST_DURATION);
+    fadeIn->setDuration(fadeTime);
     fadeIn->setStartValue(0.0);
     fadeIn->setEndValue(1.0);
 
-    auto* parallelIn = new QParallelAnimationGroup;
     parallelIn->addAnimation(moveIn);
     parallelIn->addAnimation(fadeIn);
 
-    // 停留动画
-    auto* pause = new QPropertyAnimation(opacity, "opacity");
-    pause->setDuration(1400);
-    pause->setStartValue(1.0);
-    pause->setEndValue(1.0);
+    // Simple pause
+    auto* pause = new QPropertyAnimation(toast, "geometry");
+    pause->setDuration(pauseTime);
+    pause->setStartValue(endGeom);
+    pause->setEndValue(endGeom);
 
-    // 下移渐出动画
+    // Optimize exit animation
+    auto* parallelOut = new QParallelAnimationGroup;
+
     auto* moveOut = new QPropertyAnimation(toast, "geometry");
-    moveOut->setDuration(TOAST_DURATION);
+    moveOut->setDuration(fadeTime);
     moveOut->setStartValue(endGeom);
     QRect finalGeom = endGeom;
-    finalGeom.moveCenter(centerPos + QPoint(0, 50));
+    finalGeom.moveCenter(centerPos + QPoint(0, 30));
     moveOut->setEndValue(finalGeom);
     moveOut->setEasingCurve(QEasingCurve::InCubic);
 
     auto* fadeOut = new QPropertyAnimation(opacity, "opacity");
-    fadeOut->setDuration(TOAST_DURATION);
+    fadeOut->setDuration(fadeTime);
     fadeOut->setStartValue(1.0);
     fadeOut->setEndValue(0.0);
 
-    auto* parallelOut = new QParallelAnimationGroup;
     parallelOut->addAnimation(moveOut);
     parallelOut->addAnimation(fadeOut);
 
@@ -62,79 +72,74 @@ void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPo
     group->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
-// 在你的代码中，修改 PREVIEW_DURATION 的定义
-#define PREVIEW_DURATION 250 // 尝试新的值
-
 void AnimationManager::playPreviewShowAnimation(QWidget* preview, const QRect& finalGeometry) {
+    preview->setAttribute(Qt::WA_TranslucentBackground);
+    preview->setAttribute(Qt::WA_OpaquePaintEvent);
+
     QRect startGeom = finalGeometry;
-    startGeom.setSize(QSize(10, 10)); // 设置一个较小的初始尺寸
+    startGeom.setSize(QSize(finalGeometry.width()/2, finalGeometry.height()/2));
     startGeom.moveCenter(finalGeometry.center());
 
     auto* anim = new QPropertyAnimation(preview, "geometry");
-    anim->setDuration(PREVIEW_DURATION);
+    anim->setDuration(200); // Reduced duration
     anim->setStartValue(startGeom);
     anim->setEndValue(finalGeometry);
-    anim->setEasingCurve(QEasingCurve::OutQuad); // 使用 OutQuad
+    anim->setEasingCurve(QEasingCurve::OutQuad);
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void AnimationManager::playPreviewHideAnimation(QWidget* preview, const QRect& finalGeometry) {
     QRect startGeom = preview->geometry();
-    QRect endGeom = finalGeometry;
-    endGeom.setSize(QSize(10, 10)); // 设置一个较小的结束尺寸
-    endGeom.moveCenter(finalGeometry.center());
+    QRect endGeom = startGeom;
+    endGeom.setSize(QSize(startGeom.width()/2, startGeom.height()/2));
+    endGeom.moveCenter(startGeom.center());
 
     auto* anim = new QPropertyAnimation(preview, "geometry");
-    anim->setDuration(PREVIEW_DURATION);
+    anim->setDuration(150); // Reduced duration
     anim->setStartValue(startGeom);
     anim->setEndValue(endGeom);
-    anim->setEasingCurve(QEasingCurve::OutQuad); // 使用 OutQuad
+    anim->setEasingCurve(QEasingCurve::InQuad);
 
     connect(anim, &QPropertyAnimation::finished, preview, &QWidget::close);
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
+
 void AnimationManager::playListItemAnimation(QWidget* item) {
-    // 减少动画时长，避免视觉延迟
-    const int ANIM_DURATION = 200;  
-    // 使用缓存机制提升渲染性能
     item->setAttribute(Qt::WA_TranslucentBackground);
     item->setAttribute(Qt::WA_OpaquePaintEvent);
 
     auto* heightAnim = new QPropertyAnimation(item, "minimumHeight");
-    heightAnim->setDuration(ANIM_DURATION);
+    heightAnim->setDuration(150);
     heightAnim->setStartValue(0);
     heightAnim->setEndValue(item->sizeHint().height());
-    heightAnim->setEasingCurve(QEasingCurve::OutQuad); // 使用更轻量的缓动曲线
+    heightAnim->setEasingCurve(QEasingCurve::OutQuad);
+    heightAnim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 void AnimationManager::playButtonClickAnimation(QPushButton* button) {
-	// Reduce animation duration for better responsiveness
-	const int CLICK_DURATION = 50; // Reduced from default BUTTON_DURATION
+    button->setAttribute(Qt::WA_TranslucentBackground);
+    button->setAttribute(Qt::WA_OpaquePaintEvent);
 
-	// Enable widget caching for smoother animation
-	button->setAttribute(Qt::WA_TranslucentBackground);
-	button->setAttribute(Qt::WA_OpaquePaintEvent);
+    auto* scaleAnim = new QPropertyAnimation(button, "geometry");
+    scaleAnim->setDuration(40);
+    QRect geom = button->geometry();
+    QRect smallerGeom = geom;
+    smallerGeom.adjust(1, 1, -1, -1);
 
-	auto* scaleAnim = new QPropertyAnimation(button, "geometry");
-	scaleAnim->setDuration(CLICK_DURATION);
-	QRect geom = button->geometry();
-	QRect smallerGeom = geom;
-	smallerGeom.adjust(1, 1, -1, -1); // Smaller scaling for faster animation
+    scaleAnim->setStartValue(geom);
+    scaleAnim->setEndValue(smallerGeom);
+    scaleAnim->setEasingCurve(QEasingCurve::Linear);
 
-	scaleAnim->setStartValue(geom);
-	scaleAnim->setEndValue(smallerGeom);
-	scaleAnim->setEasingCurve(QEasingCurve::OutQuad); // Simpler easing curve
+    auto* reverseAnim = new QPropertyAnimation(button, "geometry");
+    reverseAnim->setDuration(40);
+    reverseAnim->setStartValue(smallerGeom);
+    reverseAnim->setEndValue(geom);
+    reverseAnim->setEasingCurve(QEasingCurve::Linear);
 
-	auto* reverseAnim = new QPropertyAnimation(button, "geometry");
-	reverseAnim->setDuration(CLICK_DURATION);
-	reverseAnim->setStartValue(smallerGeom);
-	reverseAnim->setEndValue(geom);
-	reverseAnim->setEasingCurve(QEasingCurve::InQuad); // Simpler easing curve
-
-	auto* sequence = new QSequentialAnimationGroup;
-	sequence->addAnimation(scaleAnim);
-	sequence->addAnimation(reverseAnim);
-	sequence->start(QAbstractAnimation::DeleteWhenStopped);
+    auto* sequence = new QSequentialAnimationGroup;
+    sequence->addAnimation(scaleAnim);
+    sequence->addAnimation(reverseAnim);
+    sequence->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 QEasingCurve AnimationManager::getCustomBounceEasing() const {

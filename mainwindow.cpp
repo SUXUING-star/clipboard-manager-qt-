@@ -50,7 +50,7 @@ void MainWindow::setupUI() {
     layout->setContentsMargins(0,0,0,0);
 
     // Left Panel
-    auto *leftPanel = new QWidget;
+    leftPanel = new QWidget;
     qDebug() << "Left panel created";
     leftPanel->setFixedWidth(200);
     leftPanel->setStyleSheet("background-color: #4B8BF4;");
@@ -61,9 +61,24 @@ void MainWindow::setupUI() {
     leftLayout->setSpacing(0);
     leftLayout->setContentsMargins(0,0,0,0);
 
+    auto *titleContainer = new QWidget;
+    auto *titleLayout = new QVBoxLayout(titleContainer);
+    titleLayout->setSpacing(8);
+    titleLayout->setContentsMargins(20, 20, 20, 10);
+
     titleLabel = new QLabel("剪贴板历史");
-    titleLabel->setStyleSheet("color: white; font-size: 16px; padding: 20px;");
-    leftLayout->addWidget(titleLabel);
+    titleLabel->setStyleSheet("color: white; font-size: 16px; font-weight: bold;");
+    titleLabel->setAlignment(Qt::AlignCenter);
+
+    auto *iconLabel = new QLabel;
+    QPixmap icon(":/icons/icon.png");
+    iconLabel->setPixmap(icon.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    iconLabel->setAlignment(Qt::AlignCenter);
+    iconLabel->setStyleSheet("margin-bottom: 10px;");
+
+    titleLayout->addWidget(iconLabel);
+    titleLayout->addWidget(titleLabel);
+    leftLayout->addWidget(titleContainer);
 
     // Buttons
     categoryBtns = new QButtonGroup(this);
@@ -196,39 +211,20 @@ void MainWindow::clipboardChanged() {
     const QMimeData *mimeData = clipboard->mimeData();
     if(!mimeData) return;
 
-    qDebug() << "Clipboard mime types: " << mimeData->formats();
-
     if(mimeData->hasImage()) {
         QPixmap image;
         try {
             image = qvariant_cast<QPixmap>(mimeData->imageData());
-            if(image.isNull()) {
-                qDebug() << "Error: Null pixmap from clipboard!";
-                return;
-            }
+            if(image.isNull()) return;
         } catch (const std::exception& e) {
             qDebug() << "Error loading image from clipboard: " << e.what();
             return;
         }
 
-        QByteArray hash;
-        {
-            QBuffer buffer(&hash);
-            buffer.open(QIODevice::WriteOnly);
-            image.save(&buffer, "PNG");
-        }
-        QString currentHash = QString(QCryptographicHash::hash(hash, QCryptographicHash::Md5).toHex());
-
+        QString newHash = getImageHash(image);
         if(!items.isEmpty() && items.first().type == ClipboardItem::Image) {
-            QByteArray lastHash;
-            {
-                QBuffer buffer(&lastHash);
-                buffer.open(QIODevice::WriteOnly);
-                items.first().image.save(&buffer, "PNG");
-            }
-            QString lastImageHash = QString(QCryptographicHash::hash(lastHash, QCryptographicHash::Md5).toHex());
-
-            if(currentHash == lastImageHash) return;
+            QString oldHash = getImageHash(items.first().image);
+            if(newHash == oldHash) return;
         }
 
         ClipboardItem item;
@@ -236,8 +232,10 @@ void MainWindow::clipboardChanged() {
         item.image = image;
         item.timestamp = QDateTime::currentDateTime();
         items.prepend(item);
+        updateList();
     } else if(mimeData->hasText()) {
-        if(!items.isEmpty() && items.first().type == ClipboardItem::Text && items.first().text == mimeData->text()) {
+        if(!items.isEmpty() && items.first().type == ClipboardItem::Text &&
+            items.first().text == mimeData->text()) {
             return;
         }
         ClipboardItem item;
@@ -245,9 +243,16 @@ void MainWindow::clipboardChanged() {
         item.text = mimeData->text();
         item.timestamp = QDateTime::currentDateTime();
         items.prepend(item);
+        updateList();
     }
+}
 
-    updateList();
+QString MainWindow::getImageHash(const QPixmap& image) {
+    QByteArray byteArray;
+    QBuffer buffer(&byteArray);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "PNG");
+    return QString(QCryptographicHash::hash(byteArray, QCryptographicHash::Md5).toHex());
 }
 
 
@@ -374,18 +379,25 @@ void MainWindow::onCategoryChanged(QAbstractButton *button) {
 void MainWindow::showToast(const QString &message) {
     auto *toast = new QDialog(this, Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
     toast->setAttribute(Qt::WA_DeleteOnClose);
-    toast->setStyleSheet("background: #4B8BF4; border-radius: 4px; color: white;");
+    toast->setAttribute(Qt::WA_TranslucentBackground); // 添加透明背景支持
+
+    auto *mainWidget = new QWidget(toast);
+    mainWidget->setStyleSheet("background-color: #4B8BF4; border-radius: 4px;");
 
     auto *layout = new QVBoxLayout(toast);
+    layout->setContentsMargins(0, 0, 0, 0);
+
+    auto *innerLayout = new QVBoxLayout(mainWidget);
     auto *label = new QLabel(message);
-    label->setStyleSheet("padding: 10px 20px;");
-    layout->addWidget(label);
+    label->setStyleSheet("color: white; padding: 10px 20px; background: transparent;");
+    innerLayout->addWidget(label);
+
+    layout->addWidget(mainWidget);
 
     QPoint pos = this->geometry().center();
     toast->move(pos.x() - toast->width()/2, pos.y());
     toast->show();
 
-    // 使用动画管理器播放Toast动画
     animationManager->playToastAnimation(toast, this->geometry().center());
 }
 
@@ -400,7 +412,6 @@ void MainWindow::updateList() {
     contentList->clear();
     QString category = categoryBtns->checkedButton()->text();
 
-    // 设置列表widget的属性
     contentList->setSpacing(10);
     contentList->setViewMode(QListView::ListMode);
     contentList->setVerticalScrollMode(QListWidget::ScrollPerPixel);
@@ -408,11 +419,17 @@ void MainWindow::updateList() {
     contentList->setResizeMode(QListView::Adjust);
 
     for (const auto &item : items) {
-        if (category == "全部" ||
-            (category == "文本" && item.type == ClipboardItem::Text) ||
-            (category == "图片" && item.type == ClipboardItem::Image)) {
+        // 严格检查类型匹配
+        bool shouldShow = false;
+        if (category == "全部") {
+            shouldShow = true;
+        } else if (category == "文本" && item.type == ClipboardItem::Text) {
+            shouldShow = true;
+        } else if (category == "图片" && item.type == ClipboardItem::Image) {
+            shouldShow = true;
+        }
 
-            // 创建列表项容器
+        if (shouldShow) {
             auto *container = new QWidget;
             container->setObjectName("itemContainer");
             container->setStyleSheet(R"(
@@ -423,28 +440,33 @@ void MainWindow::updateList() {
                 }
             )");
 
-            // 创建布局
             auto *layout = new QHBoxLayout(container);
             layout->setContentsMargins(10, 10, 10, 10);
             layout->setSpacing(10);
 
-            // 内容区域
             if (item.type == ClipboardItem::Image) {
                 auto *imageLabel = new QLabel;
                 imageLabel->setFixedSize(200, 150);
                 imageLabel->setAlignment(Qt::AlignCenter);
-                imageLabel->setScaledContents(true);
 
+                // 优化图片缩放质量
                 if (!item.image.isNull()) {
-                    QPixmap thumbnail = item.image.scaled(200, 150,
-                                                          Qt::KeepAspectRatio,
-                                                          Qt::SmoothTransformation);
-                    imageLabel->setPixmap(thumbnail);
+                    // 保持宽高比并使用高质量缩放
+                    QPixmap thumbnail = item.image.scaled(
+                        imageLabel->size() * 2, // 2倍大小以提高清晰度
+                        Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation
+                        );
+                    imageLabel->setPixmap(thumbnail.scaled(
+                        imageLabel->size(),
+                        Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation
+                        ));
                 } else {
-                    imageLabel->setText("加载失败");
+                    imageLabel->setText("图片加载失败");
                 }
                 layout->addWidget(imageLabel);
-            } else {
+            } else if (item.type == ClipboardItem::Text) {
                 auto *textLabel = new QLabel(item.text.length() > 50
                                                  ? item.text.left(50) + "..."
                                                  : item.text);
@@ -456,7 +478,6 @@ void MainWindow::updateList() {
 
             layout->addStretch();
 
-            // 复制按钮
             auto *copyBtn = new QPushButton("复制");
             copyBtn->setFixedSize(60, 30);
             copyBtn->setStyleSheet(R"(
@@ -481,19 +502,16 @@ void MainWindow::updateList() {
             });
             layout->addWidget(copyBtn);
 
-            // 创建列表项并设置固定高度
             auto *listItem = new QListWidgetItem;
             int itemHeight = (item.type == ClipboardItem::Image) ? 170 : 80;
             container->setFixedHeight(itemHeight);
             listItem->setSizeHint(QSize(contentList->viewport()->width(), itemHeight));
 
-            // 添加到列表
             contentList->addItem(listItem);
             contentList->setItemWidget(listItem, container);
         }
     }
 
-    // 更新列表视图
     contentList->update();
 }
 
@@ -513,4 +531,11 @@ void MainWindow::setAutoStart(bool enable) {
 
 void MainWindow::loadAutoStartStatus() {
     autoStart->setChecked(autoStartManager->isAutoStartEnabled());
+}
+
+// MainWindow类添加重绘事件处理
+void MainWindow::resizeEvent(QResizeEvent *event) {
+    QMainWindow::resizeEvent(event);
+    contentList->update();
+    leftPanel->update();
 }

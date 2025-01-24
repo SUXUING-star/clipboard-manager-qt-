@@ -23,6 +23,7 @@ public:
     MainWindow(QWidget *parent = nullptr);
 protected:
     bool eventFilter(QObject *obj, QEvent *event) override;
+    void resizeEvent(QResizeEvent *event) override;
 
 private:
     //动画管理类
@@ -46,13 +47,17 @@ private:
     void loadAutoStartStatus();
     void setupButtonAnimations();
 
+
     QLabel *titleLabel;
     QButtonGroup *categoryBtns;
     QCheckBox *autoStart;
     QPushButton *clearBtn;
     QWidget *contentArea;
+    QWidget *leftPanel;
     QListWidget *contentList;
     QClipboard *clipboard;
+
+    QString getImageHash(const QPixmap& image);
 
     QList<ClipboardItem> items;
     QDialog* createStyledDialog(const ClipboardItem& item);
