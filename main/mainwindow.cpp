@@ -1,5 +1,5 @@
 #include "mainwindow.h"
-#include "animationmanager.h"
+#include "../components/animationmanager.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
@@ -38,6 +38,32 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     qDebug() << "MainWindow constructor end";
 }
 
+// mainwindow.cpp - Add to destructor
+MainWindow::~MainWindow() {
+    clearCache();  // 先清理缓存
+    items.clear(); // 清理剪贴板项目
+
+    // 停止所有动画
+    if(animationManager) {
+        delete animationManager;
+        animationManager = nullptr;
+    }
+    // Clear clipboard history first
+    clearHistory();
+
+    // Delete managers
+    delete animationManager;
+    delete autoStartManager;
+
+    // Clean up UI elements
+    qDeleteAll(categoryBtns->buttons());
+    delete categoryBtns;
+
+    // Clear any remaining dialogs
+    QList<QDialog*> dialogs = findChildren<QDialog*>();
+    qDeleteAll(dialogs);
+}
+
 void MainWindow::setupUI() {
     qDebug() << "SetupUI start";
 
@@ -70,14 +96,20 @@ void MainWindow::setupUI() {
     titleLabel->setStyleSheet("color: white; font-size: 16px; font-weight: bold;");
     titleLabel->setAlignment(Qt::AlignCenter);
 
+    descLabel = new QLabel("你就尽管Ctrl+C\n我就负责记录");
+    descLabel->setStyleSheet("color: rgba(255,255,255,0.8); font-size: 12px;");
+    descLabel->setAlignment(Qt::AlignCenter);
+    descLabel->setWordWrap(true);
+
     auto *iconLabel = new QLabel;
-    QPixmap icon(":/icons/icon.png");
+    QPixmap icon(":/icons/header.ico");
     iconLabel->setPixmap(icon.scaled(256, 256, Qt::KeepAspectRatio, Qt::SmoothTransformation));
     iconLabel->setAlignment(Qt::AlignCenter);
     iconLabel->setStyleSheet("margin-bottom: 10px;");
 
     titleLayout->addWidget(iconLabel);
     titleLayout->addWidget(titleLabel);
+    titleLayout->addWidget(descLabel);
     leftLayout->addWidget(titleContainer);
 
     // Buttons
@@ -212,20 +244,18 @@ void MainWindow::clipboardChanged() {
     if(!mimeData) return;
 
     if(mimeData->hasImage()) {
-        QPixmap image;
-        try {
-            image = qvariant_cast<QPixmap>(mimeData->imageData());
-            if(image.isNull()) return;
-        } catch (const std::exception& e) {
-            qDebug() << "Error loading image from clipboard: " << e.what();
-            return;
+        QPixmap image = qvariant_cast<QPixmap>(mimeData->imageData());
+        if(image.isNull()) return;
+
+        QString hash = getImageHash(image);
+
+        // 检查是否重复
+        if(!items.isEmpty() && items.first().type == ClipboardItem::Image) {
+            if(hash == getImageHash(items.first().image)) return;
         }
 
-        QString newHash = getImageHash(image);
-        if(!items.isEmpty() && items.first().type == ClipboardItem::Image) {
-            QString oldHash = getImageHash(items.first().image);
-            if(newHash == oldHash) return;
-        }
+        // 添加到缓存
+        addToCache(hash, image);
 
         ClipboardItem item;
         item.type = ClipboardItem::Image;
@@ -362,14 +392,27 @@ void MainWindow::showPreview(QListWidgetItem *item) {
     int index = contentList->row(item);
     if(index < 0 || index >= items.size()) return;
 
-    const auto &clipItem = items[index];
-    QDialog* dialog = createStyledDialog(clipItem);
-    dialog->show();
+    QDialog* dialog = createStyledDialog(items[index]);
+    if(!dialog) return;
 
+    // Set size and position
     QRect geometry(0, 0, width() * 0.8, height() * 0.8);
     geometry.moveCenter(pos() + rect().center());
+    dialog->setGeometry(geometry);
+
+    // Show dialog before animation
+    dialog->show();
     animationManager->playPreviewShowAnimation(dialog, geometry);
+
+    // Ensure cleanup
+    dialog->setAttribute(Qt::WA_DeleteOnClose);
+    connect(dialog, &QDialog::destroyed, [this]() {
+        // 强制清理残留的GraphicsEffect
+        QList<QGraphicsEffect*> effects = findChildren<QGraphicsEffect*>();
+        qDeleteAll(effects);
+    });
 }
+
 
 void MainWindow::onCategoryChanged(QAbstractButton *button) {
     updateList();
@@ -407,119 +450,182 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event) {
     }
     return QMainWindow::eventFilter(obj, event);
 }
-
+// 在MainWindow类的实现中添加以下函数
+QPushButton* MainWindow::createCopyButton()
+{
+    QPushButton* copyButton = new QPushButton(tr("复制"));
+    copyButton->setStyleSheet(R"(
+        QPushButton {
+            background-color: #4B8BF4;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #357ABD;
+        }
+    )");
+    return copyButton;
+}
 void MainWindow::updateList() {
+    // 暂停UI更新提升性能
+    contentList->setUpdatesEnabled(false);
+    QSignalBlocker blocker(contentList); // 暂时阻塞信号
+
+    // 预分配空间
+
+    int estimatedItems = items.size();
     contentList->clear();
+
     QString category = categoryBtns->checkedButton()->text();
 
-    contentList->setSpacing(10);
-    contentList->setViewMode(QListView::ListMode);
-    contentList->setVerticalScrollMode(QListWidget::ScrollPerPixel);
-    contentList->setUniformItemSizes(false);
-    contentList->setResizeMode(QListView::Adjust);
+    // 预分配容器空间
+    QVector<QListWidgetItem*> newItems;
+    newItems.reserve(items.size());
 
     for (const auto &item : items) {
-        // 严格检查类型匹配
-        bool shouldShow = false;
-        if (category == "全部") {
-            shouldShow = true;
-        } else if (category == "文本" && item.type == ClipboardItem::Text) {
-            shouldShow = true;
-        } else if (category == "图片" && item.type == ClipboardItem::Image) {
-            shouldShow = true;
+        // 检查类型匹配
+        bool shouldShow =
+            category == "全部" ||
+            (category == "文本" && item.type == ClipboardItem::Text) ||
+            (category == "图片" && item.type == ClipboardItem::Image);
+
+        if (!shouldShow) continue;
+
+        // 创建容器widget
+        auto *container = new QWidget;
+        container->setObjectName("itemContainer");
+        container->setStyleSheet(R"(
+           #itemContainer {
+               background-color: #F8F9FA;
+               border-radius: 6px;
+               margin: 5px;
+           }
+       )");
+
+        auto *layout = new QHBoxLayout(container);
+        layout->setContentsMargins(10, 10, 10, 10);
+        layout->setSpacing(10);
+
+        // 根据类型添加内容
+        if (item.type == ClipboardItem::Image) {
+            auto *imageLabel = createImageLabel(item.image);
+            layout->addWidget(imageLabel);
+        } else {
+            auto *textLabel = createTextLabel(item.text);
+            layout->addWidget(textLabel);
         }
 
-        if (shouldShow) {
-            auto *container = new QWidget;
-            container->setObjectName("itemContainer");
-            container->setStyleSheet(R"(
-                #itemContainer {
-                    background-color: #F8F9FA;
-                    border-radius: 6px;
-                    margin: 5px;
-                }
-            )");
+        layout->addStretch();
 
-            auto *layout = new QHBoxLayout(container);
-            layout->setContentsMargins(10, 10, 10, 10);
-            layout->setSpacing(10);
-
+        // 添加复制按钮
+        auto *copyBtn = createCopyButton();
+        connect(copyBtn, &QPushButton::clicked, [this, item]() {
             if (item.type == ClipboardItem::Image) {
-                auto *imageLabel = new QLabel;
-                imageLabel->setFixedSize(200, 150);
-                imageLabel->setAlignment(Qt::AlignCenter);
-
-                // 优化图片缩放质量
-                if (!item.image.isNull()) {
-                    // 保持宽高比并使用高质量缩放
-                    QPixmap thumbnail = item.image.scaled(
-                        imageLabel->size() * 2, // 2倍大小以提高清晰度
-                        Qt::KeepAspectRatio,
-                        Qt::SmoothTransformation
-                        );
-                    imageLabel->setPixmap(thumbnail.scaled(
-                        imageLabel->size(),
-                        Qt::KeepAspectRatio,
-                        Qt::SmoothTransformation
-                        ));
-                } else {
-                    imageLabel->setText("图片加载失败");
-                }
-                layout->addWidget(imageLabel);
-            } else if (item.type == ClipboardItem::Text) {
-                auto *textLabel = new QLabel(item.text.length() > 50
-                                                 ? item.text.left(50) + "..."
-                                                 : item.text);
-                textLabel->setWordWrap(true);
-                textLabel->setMinimumWidth(200);
-                textLabel->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
-                layout->addWidget(textLabel);
+                clipboard->setPixmap(item.image);
+            } else {
+                clipboard->setText(item.text);
             }
+            showToast("已复制到剪贴板");
+        });
+        layout->addWidget(copyBtn);
 
-            layout->addStretch();
+        // 创建列表项
+        auto *listItem = new QListWidgetItem;
+        int itemHeight = (item.type == ClipboardItem::Image) ? 170 : 80;
+        container->setFixedHeight(itemHeight);
+        listItem->setSizeHint(QSize(contentList->viewport()->width(), itemHeight));
 
-            auto *copyBtn = new QPushButton("复制");
-            copyBtn->setFixedSize(60, 30);
-            copyBtn->setStyleSheet(R"(
-                QPushButton {
-                    background: #4B8BF4;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                }
-                QPushButton:hover {
-                    background: #3579E3;
-                }
-            )");
+        contentList->addItem(listItem);
+        contentList->setItemWidget(listItem, container);
 
-            connect(copyBtn, &QPushButton::clicked, [this, item]() {
-                if (item.type == ClipboardItem::Image) {
-                    clipboard->setPixmap(item.image);
-                } else {
-                    clipboard->setText(item.text);
-                }
-                showToast("已复制到剪贴板");
-            });
-            layout->addWidget(copyBtn);
-
-            auto *listItem = new QListWidgetItem;
-            int itemHeight = (item.type == ClipboardItem::Image) ? 170 : 80;
-            container->setFixedHeight(itemHeight);
-            listItem->setSizeHint(QSize(contentList->viewport()->width(), itemHeight));
-
-            contentList->addItem(listItem);
-            contentList->setItemWidget(listItem, container);
-        }
+        newItems.append(listItem);
     }
 
+    // 批量添加并恢复UI更新
+    // 修改为:
+    for(auto* item : newItems) {
+        contentList->addItem(item);
+    }
+    contentList->setUpdatesEnabled(true);
     contentList->update();
 }
 
+// 辅助函数
+QLabel* MainWindow::createImageLabel(const QPixmap& image) {
+    auto *label = new QLabel;
+    label->setFixedSize(200, 150);
+    label->setAlignment(Qt::AlignCenter);
+
+    if (!image.isNull()) {
+        QPixmap thumbnail = image.scaled(
+            label->size() * 2,
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation
+            );
+        label->setPixmap(thumbnail.scaled(
+            label->size(),
+            Qt::KeepAspectRatio,
+            Qt::SmoothTransformation
+            ));
+    } else {
+        label->setText("图片加载失败");
+    }
+    return label;
+}
+
+QLabel* MainWindow::createTextLabel(const QString& text) {
+    auto *label = new QLabel(text.length() > 50 ? text.left(50) + "..." : text);
+    label->setWordWrap(true);
+    label->setMinimumWidth(200);
+    label->setAlignment(Qt::AlignVCenter | Qt::AlignLeft);
+    return label;
+}
+
 void MainWindow::clearHistory() {
+    // Clear images first to free memory
+    for(auto &item : items) {
+        if(item.type == ClipboardItem::Image) {
+            item.image = QPixmap();
+        }
+    }
     items.clear();
     contentList->clear();
-    showToast("历史记录已清空"); // 显示清空历史记录的Toast消息
+    showToast("历史记录已清空");
 }
+
+// mainwindow.cpp - 实现缓存机制
+void MainWindow::clearCache() {
+    imageCache.clear();
+    currentCacheSize = 0;
+}
+
+void MainWindow::addToCache(const QString& hash, const QPixmap& image) {
+    // 添加图片大小限制
+    if(image.width() * image.height() > 4000 * 3000) {
+        QPixmap scaled = image.scaled(2000, 1500, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        imageCache.insert(hash, scaled);
+        currentCacheSize += (scaled.width() * scaled.height() * 4) / (1024 * 1024);
+    }
+    // 估算图片大小(MB)
+    int imageSize = (image.width() * image.height() * 4) / (1024 * 1024);
+
+    // 缓存超限时清理最旧的
+    while(currentCacheSize + imageSize > MAX_CACHE_SIZE && !imageCache.isEmpty()) {
+        auto it = imageCache.begin();
+        const QPixmap& oldImage = it.value();
+        currentCacheSize -= (oldImage.width() * oldImage.height() * 4) / (1024 * 1024);
+        imageCache.erase(it);
+    }
+
+    imageCache.insert(hash, image);
+    currentCacheSize += imageSize;
+}
+QPixmap MainWindow::getFromCache(const QString& hash) {
+    return imageCache.value(hash);
+}
+
 
 void MainWindow::setAutoStart(bool enable) {
     if (autoStartManager->setAutoStart(enable)) {

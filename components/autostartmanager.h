@@ -7,7 +7,6 @@
 
 class AutoStartManager : public QObject {
     Q_OBJECT
-
 public:
     explicit AutoStartManager(QObject *parent = nullptr);
     bool isAutoStartEnabled() const;

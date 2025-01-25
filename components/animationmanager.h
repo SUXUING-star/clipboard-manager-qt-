@@ -16,6 +16,7 @@ class AnimationManager : public QObject {
 
 public:
     explicit AnimationManager(QObject *parent = nullptr);
+    ~AnimationManager() override;
 
     // Toast动画
     void playToastAnimation(QWidget* toast, const QPoint& centerPos);
@@ -35,6 +36,20 @@ public:
     QEasingCurve getCustomElasticEasing() const;
 
 private:
+    QGraphicsEffect *scaleEffect;
+    QList<QAbstractAnimation*> activeAnimations; // 跟踪所有活动的动画
+
+    void cleanupAnimation(QAbstractAnimation* animation){
+        if(!animation) return;
+
+        activeAnimations.removeOne(animation);
+        animation->stop();
+        animation->deleteLater();
+
+        // Clear any orphaned effects
+        QList<QGraphicsEffect*> effects = animation->findChildren<QGraphicsEffect*>();
+        qDeleteAll(effects);
+    };
     const int TOAST_DURATION = 300;
     const int PREVIEW_DURATION = 300;
     const int LISTITEM_DURATION = 300;

@@ -1,4 +1,5 @@
 #include "animationmanager.h"
+#include <QGraphicsScale>
 
 AnimationManager::AnimationManager(QObject *parent) : QObject(parent) {}
 
@@ -11,6 +12,7 @@ void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPo
     toast->setGraphicsEffect(opacity);
 
     auto* group = new QSequentialAnimationGroup(toast);
+    activeAnimations.append(group);
 
     // Optimize animation durations
     const int fadeTime = 200;
@@ -68,23 +70,41 @@ void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPo
     group->addAnimation(pause);
     group->addAnimation(parallelOut);
 
-    connect(group, &QSequentialAnimationGroup::finished, toast, &QWidget::deleteLater);
+    connect(group, &QSequentialAnimationGroup::finished, this, [this, group]() {
+        cleanupAnimation(group);
+    });
     group->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
+
+
+
+AnimationManager::~AnimationManager() {
+    qDeleteAll(activeAnimations);
+}
+
+
 void AnimationManager::playPreviewShowAnimation(QWidget* preview, const QRect& finalGeometry) {
+    if(!preview || !preview->isVisible()) return;
+
     preview->setAttribute(Qt::WA_TranslucentBackground);
-    preview->setAttribute(Qt::WA_OpaquePaintEvent);
 
     QRect startGeom = finalGeometry;
     startGeom.setSize(QSize(finalGeometry.width()/2, finalGeometry.height()/2));
     startGeom.moveCenter(finalGeometry.center());
 
     auto* anim = new QPropertyAnimation(preview, "geometry");
-    anim->setDuration(200); // Reduced duration
+    activeAnimations.append(anim);
+
+    anim->setDuration(200);
     anim->setStartValue(startGeom);
     anim->setEndValue(finalGeometry);
     anim->setEasingCurve(QEasingCurve::OutQuad);
+
+    connect(anim, &QPropertyAnimation::finished, this, [this, anim]() {
+        cleanupAnimation(anim);
+    });
+
     anim->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
@@ -117,29 +137,56 @@ void AnimationManager::playListItemAnimation(QWidget* item) {
 }
 
 void AnimationManager::playButtonClickAnimation(QPushButton* button) {
-    button->setAttribute(Qt::WA_TranslucentBackground);
-    button->setAttribute(Qt::WA_OpaquePaintEvent);
+    if(!button) return;
 
-    auto* scaleAnim = new QPropertyAnimation(button, "geometry");
-    scaleAnim->setDuration(40);
-    QRect geom = button->geometry();
-    QRect smallerGeom = geom;
-    smallerGeom.adjust(1, 1, -1, -1);
+    // 停止已有动画
+    for(auto* anim : activeAnimations) {
+        if(anim->parent() == button) {
+            cleanupAnimation(anim);
+            return;  // 等待动画完全停止
+        }
+    }
 
-    scaleAnim->setStartValue(geom);
-    scaleAnim->setEndValue(smallerGeom);
-    scaleAnim->setEasingCurve(QEasingCurve::Linear);
+    // 使用属性存储原始大小和状态
+    static const char* ORIGINAL_GEOMETRY = "originalGeometry";
+    static const char* IS_SCALED = "isScaled";
 
-    auto* reverseAnim = new QPropertyAnimation(button, "geometry");
-    reverseAnim->setDuration(40);
-    reverseAnim->setStartValue(smallerGeom);
-    reverseAnim->setEndValue(geom);
-    reverseAnim->setEasingCurve(QEasingCurve::Linear);
+    if(!button->property(ORIGINAL_GEOMETRY).isValid()) {
+        button->setProperty(ORIGINAL_GEOMETRY, button->geometry());
+        button->setProperty(IS_SCALED, false);
+    }
 
-    auto* sequence = new QSequentialAnimationGroup;
-    sequence->addAnimation(scaleAnim);
-    sequence->addAnimation(reverseAnim);
-    sequence->start(QAbstractAnimation::DeleteWhenStopped);
+    auto* animGroup = new QParallelAnimationGroup(button);
+    activeAnimations.append(animGroup);
+
+    QRect originalGeom = button->property(ORIGINAL_GEOMETRY).toRect();
+    bool isScaled = button->property(IS_SCALED).toBool();
+
+    QRect targetGeom;
+    if(!isScaled) {
+        targetGeom = originalGeom;
+        targetGeom.adjust(
+            originalGeom.width() * 0.025,
+            originalGeom.height() * 0.025,
+            -originalGeom.width() * 0.025,
+            -originalGeom.height() * 0.025
+            );
+    } else {
+        targetGeom = originalGeom;
+    }
+
+    auto* anim = new QPropertyAnimation(button, "geometry", animGroup);
+    anim->setDuration(60);
+    anim->setStartValue(button->geometry());
+    anim->setEndValue(targetGeom);
+    anim->setEasingCurve(!isScaled ? QEasingCurve::InQuad : QEasingCurve::OutQuad);
+
+    connect(animGroup, &QParallelAnimationGroup::finished, this, [this, animGroup, button, isScaled]() {
+        button->setProperty(IS_SCALED, !isScaled);
+        cleanupAnimation(animGroup);
+    });
+
+    animGroup->start(QAbstractAnimation::DeleteWhenStopped);
 }
 
 QEasingCurve AnimationManager::getCustomBounceEasing() const {

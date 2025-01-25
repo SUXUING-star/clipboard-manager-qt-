@@ -1,4 +1,3 @@
-# CMakeLists.txt
 cmake_minimum_required(VERSION 3.15)
 project(clipboard_manager)
 
@@ -9,29 +8,32 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS
-   Core
-   Gui
-   Widgets
+    Core
+    Gui
+    Widgets
 )
 
 add_executable(clipboard_manager
-   main.cpp
-   mainwindow.cpp
-   mainwindow.h
-   resources.qrc
-   animationmanager.h
-   animationmanager.cpp
-   autostartmanager.h autostartmanager.cpp
+    main/main.cpp
+    main/mainwindow.cpp
+    main/mainwindow.h
+    resources.qrc
+    components/animationmanager.h
+    components/animationmanager.cpp
+    components/autostartmanager.h
+    components/autostartmanager.cpp
 )
 
 target_link_libraries(clipboard_manager PRIVATE
-   Qt6::Core
-   Qt6::Gui
-   Qt6::Widgets
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Widgets
 )
 
+
+
 if(WIN32)
-   set_target_properties(clipboard_manager PROPERTIES
-       WIN32_EXECUTABLE TRUE
-   )
+    set_target_properties(clipboard_manager PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
 endif()
