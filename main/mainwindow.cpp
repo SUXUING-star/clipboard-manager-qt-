@@ -24,6 +24,7 @@
 #include <QScreen>
 #include <QTimer>
 #include <QSettings>
+#include <QFileDialog>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("剪贴板历史");
@@ -34,6 +35,8 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
     autoStartManager = new AutoStartManager(this);
     loadAutoStartStatus();
+
+    downloadManager = new DownloadManager(this);
 
     qDebug() << "MainWindow constructor end";
 }
@@ -468,6 +471,25 @@ QPushButton* MainWindow::createCopyButton()
     )");
     return copyButton;
 }
+
+
+QPushButton* MainWindow::createSaveButton() {
+    auto* saveButton = new QPushButton(tr("保存"));
+    saveButton->setStyleSheet(R"(
+        QPushButton {
+            background-color: #4B8BF4;
+            color: white;
+            border: none;
+            padding: 5px 10px;
+            border-radius: 4px;
+        }
+        QPushButton:hover {
+            background-color: #357ABD;
+        }
+    )");
+    return saveButton;
+}
+
 void MainWindow::updateList() {
     // 暂停UI更新提升性能
     contentList->setUpdatesEnabled(false);
@@ -530,6 +552,12 @@ void MainWindow::updateList() {
             showToast("已复制到剪贴板");
         });
         layout->addWidget(copyBtn);
+        //下载按钮
+        auto* saveBtn = createSaveButton();
+        connect(saveBtn, &QPushButton::clicked, [this, item]() {
+            saveContent(item);
+        });
+        layout->addWidget(saveBtn);
 
         // 创建列表项
         auto *listItem = new QListWidgetItem;
@@ -644,4 +672,45 @@ void MainWindow::resizeEvent(QResizeEvent *event) {
     QMainWindow::resizeEvent(event);
     contentList->update();
     leftPanel->update();
+}
+
+void MainWindow::saveContent(const ClipboardItem& item) {
+    QString filter = item.type == ClipboardItem::Text ?
+                         "Text files (*.txt);;All Files (*)" :
+                         "Images (*.png *.jpg);;All Files (*)";
+
+    QString fileName = QFileDialog::getSaveFileName(this,
+                                                    "保存文件",
+                                                    QDir::homePath() + "/Downloads/clipboard_" +
+                                                        QDateTime::currentDateTime().toString("yyyyMMdd_hhmmss") +
+                                                        (item.type == ClipboardItem::Text ? ".txt" : ".png"),
+                                                    filter);
+
+    if (fileName.isEmpty()) return;
+
+    bool success = false;
+    if (item.type == ClipboardItem::Text) {
+        success = downloadManager->saveText(item.text, fileName);
+    } else {
+        success = downloadManager->saveImage(item.image, fileName);
+    }
+
+    if (success) {
+        showToast("文件保存成功");
+    } else {
+        showToast("保存失败: " + downloadManager->getLastError());
+    }
+}
+
+void MainWindow::onSaveButtonClicked() {
+    QListWidgetItem* currentItem = contentList->currentItem();
+    if (!currentItem) {
+        showToast("请先选择要保存的内容");
+        return;
+    }
+
+    int index = contentList->row(currentItem);
+    if (index >= 0 && index < items.size()) {
+        saveContent(items[index]);
+    }
 }

@@ -16,6 +16,8 @@
 #include "../components/animationmanager.h"
 #include "../components/autostartmanager.h"
 
+#include "../components/downloadmanager.h"
+
 #include <QHash>
 #include <QString>
 #include <QPixmap>
@@ -34,6 +36,8 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+
+
     QLabel *descLabel;
     //动画管理类
     AnimationManager *animationManager;
@@ -51,6 +55,7 @@ private:
     void updateList();
     QDialog* createPreviewDialog(const ClipboardItem& item);
     QPushButton* createCopyButton();
+    QPushButton* createSaveButton();
     void copyToClipboard(const QString& text);
     void copyImageToClipboard(const QPixmap& image);
     void showToast(const QString &message);
@@ -86,10 +91,15 @@ private:
     const int MAX_CACHE_SIZE = 20; // MB
     int currentCacheSize = 0;
 
+    // 下载
+    DownloadManager *downloadManager;
+    void saveContent(const ClipboardItem& item);
+
 
 
 
 private slots:
+    void onSaveButtonClicked();
     void clipboardChanged();
     void showPreview(QListWidgetItem *item);
     void onCategoryChanged(QAbstractButton *button);

@@ -7,12 +7,17 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
+# 只引入需要的 Qt 模块
 find_package(Qt6 REQUIRED COMPONENTS
     Core
-    Gui
     Widgets
 )
 
+# 编译优化：使用 Release 模式，启用 O3 优化并剔除调试信息
+set(CMAKE_BUILD_TYPE Release)
+set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -s")
+
+# 添加可执行文件
 add_executable(clipboard_manager
     main/main.cpp
     main/mainwindow.cpp
@@ -22,16 +27,17 @@ add_executable(clipboard_manager
     components/animationmanager.cpp
     components/autostartmanager.h
     components/autostartmanager.cpp
+    components/downloadmanager.cpp
+    components/downloadmanager.h
 )
 
+# 仅链接所需的 Qt 库
 target_link_libraries(clipboard_manager PRIVATE
     Qt6::Core
-    Qt6::Gui
     Qt6::Widgets
 )
 
-
-
+# 如果是 Windows 系统，设置为窗口应用
 if(WIN32)
     set_target_properties(clipboard_manager PROPERTIES
         WIN32_EXECUTABLE TRUE

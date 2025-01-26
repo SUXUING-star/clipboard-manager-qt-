@@ -1,12 +1,12 @@
 #include "animationmanager.h"
 #include <QGraphicsScale>
+#include <QPauseAnimation>
 
 AnimationManager::AnimationManager(QObject *parent) : QObject(parent) {}
 
 void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPos) {
-    // Enable widget caching
+    toast->setAttribute(Qt::WA_DeleteOnClose);
     toast->setAttribute(Qt::WA_TranslucentBackground);
-    toast->setAttribute(Qt::WA_OpaquePaintEvent);
 
     auto* opacity = new QGraphicsOpacityEffect(toast);
     toast->setGraphicsEffect(opacity);
@@ -14,24 +14,21 @@ void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPo
     auto* group = new QSequentialAnimationGroup(toast);
     activeAnimations.append(group);
 
-    // Optimize animation durations
-    const int fadeTime = 200;
-    const int pauseTime = 1000;
+    const int fadeTime = 150; // 减少动画时间
+    const int pauseTime = 800;
 
-    // Create single combined animation
     QRect startGeom = toast->geometry();
-    startGeom.moveCenter(centerPos + QPoint(0, 30)); // Reduced movement distance
+    startGeom.moveCenter(centerPos + QPoint(0, 20));
     QRect endGeom = startGeom;
     endGeom.moveCenter(centerPos);
 
-    // Combine position and opacity animations
     auto* parallelIn = new QParallelAnimationGroup;
 
     auto* moveIn = new QPropertyAnimation(toast, "geometry");
     moveIn->setDuration(fadeTime);
     moveIn->setStartValue(startGeom);
     moveIn->setEndValue(endGeom);
-    moveIn->setEasingCurve(QEasingCurve::OutCubic); // Simplified easing
+    moveIn->setEasingCurve(QEasingCurve::OutQuad);
 
     auto* fadeIn = new QPropertyAnimation(opacity, "opacity");
     fadeIn->setDuration(fadeTime);
@@ -41,22 +38,17 @@ void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPo
     parallelIn->addAnimation(moveIn);
     parallelIn->addAnimation(fadeIn);
 
-    // Simple pause
-    auto* pause = new QPropertyAnimation(toast, "geometry");
-    pause->setDuration(pauseTime);
-    pause->setStartValue(endGeom);
-    pause->setEndValue(endGeom);
+    auto* pause = new QPauseAnimation(pauseTime);
 
-    // Optimize exit animation
     auto* parallelOut = new QParallelAnimationGroup;
 
     auto* moveOut = new QPropertyAnimation(toast, "geometry");
     moveOut->setDuration(fadeTime);
     moveOut->setStartValue(endGeom);
     QRect finalGeom = endGeom;
-    finalGeom.moveCenter(centerPos + QPoint(0, 30));
+    finalGeom.moveCenter(centerPos + QPoint(0, -20));
     moveOut->setEndValue(finalGeom);
-    moveOut->setEasingCurve(QEasingCurve::InCubic);
+    moveOut->setEasingCurve(QEasingCurve::InQuad);
 
     auto* fadeOut = new QPropertyAnimation(opacity, "opacity");
     fadeOut->setDuration(fadeTime);
@@ -70,12 +62,13 @@ void AnimationManager::playToastAnimation(QWidget* toast, const QPoint& centerPo
     group->addAnimation(pause);
     group->addAnimation(parallelOut);
 
-    connect(group, &QSequentialAnimationGroup::finished, this, [this, group]() {
+    connect(group, &QSequentialAnimationGroup::finished, this, [this, group, toast]() {
+        toast->close();
         cleanupAnimation(group);
     });
+
     group->start(QAbstractAnimation::DeleteWhenStopped);
 }
-
 
 
 
