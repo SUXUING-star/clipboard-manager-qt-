@@ -1,6 +1,7 @@
 #ifndef MAINWINDOW_H
 #define MAINWINDOW_H
 
+
 #include <QMainWindow>
 #include <QLabel>
 #include <QButtonGroup>
@@ -15,12 +16,15 @@
 #include <QPixmap>
 #include "../components/animationmanager.h"
 #include "../components/autostartmanager.h"
-
 #include "../components/downloadmanager.h"
+#include "../components/storagemanager.h"
+#include "../components/ui/customdialog.h"
 
 #include <QHash>
 #include <QString>
 #include <QPixmap>
+#include <QCloseEvent>
+
 
 #include <memory>
 
@@ -36,6 +40,7 @@ protected:
     void resizeEvent(QResizeEvent *event) override;
 
 private:
+
 
 
     QLabel *descLabel;
@@ -94,6 +99,21 @@ private:
     // 下载
     DownloadManager *downloadManager;
     void saveContent(const ClipboardItem& item);
+    //存储
+    StorageManager *storageManager;
+    void saveHistoryToStorage();
+    void loadHistoryFromStorage();
+
+    static const int MAX_HISTORY_ITEMS = 100;  // 最大历史记录数
+    bool shouldSaveHistory = true;  // 控制是否保存历史
+
+    void showHistoryLimitWarning();
+
+    void closeEvent(QCloseEvent *event) override;
+    bool convertToStorageItem(const ClipboardItem& source, StorageManager::ClipboardData& target);
+    bool convertFromStorageItem(const StorageManager::ClipboardData& source, ClipboardItem& target);
+
+
 
 
 

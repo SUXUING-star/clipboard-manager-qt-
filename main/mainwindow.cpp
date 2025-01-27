@@ -3,8 +3,6 @@
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QPushButton>
-#include <QCheckBox>
-#include <QLabel>
 #include <QDateTime>
 #include <QGraphicsDropShadowEffect>
 #include <QPropertyAnimation>
@@ -19,17 +17,18 @@
 #include <QApplication>
 #include <QDir>
 #include <QCoreApplication>
-#include <QCryptographicHash>
-#include <QBuffer>
 #include <QScreen>
 #include <QTimer>
-#include <QSettings>
 #include <QFileDialog>
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
     setWindowTitle("剪贴板历史");
+    shouldSaveHistory = true;
     animationManager = new AnimationManager(this);
+    storageManager = new StorageManager(this);
+    storageManager->setCacheSize(100);
     setupUI();
+    loadHistoryFromStorage();
     clipboard = QApplication::clipboard();
     connect(clipboard, &QClipboard::dataChanged, this, &MainWindow::clipboardChanged);
 
@@ -43,7 +42,9 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent) {
 
 // mainwindow.cpp - Add to destructor
 MainWindow::~MainWindow() {
+    saveHistoryToStorage();
     clearCache();  // 先清理缓存
+    storageManager->clearCache();
     items.clear(); // 清理剪贴板项目
 
     // 停止所有动画
@@ -55,7 +56,6 @@ MainWindow::~MainWindow() {
     clearHistory();
 
     // Delete managers
-    delete animationManager;
     delete autoStartManager;
 
     // Clean up UI elements
@@ -496,13 +496,11 @@ void MainWindow::updateList() {
     QSignalBlocker blocker(contentList); // 暂时阻塞信号
 
     // 预分配空间
-
     int estimatedItems = items.size();
     contentList->clear();
 
     QString category = categoryBtns->checkedButton()->text();
-
-    // 预分配容器空间
+        // 预分配容器空间
     QVector<QListWidgetItem*> newItems;
     newItems.reserve(items.size());
 
@@ -564,21 +562,17 @@ void MainWindow::updateList() {
         int itemHeight = (item.type == ClipboardItem::Image) ? 170 : 80;
         container->setFixedHeight(itemHeight);
         listItem->setSizeHint(QSize(contentList->viewport()->width(), itemHeight));
+        newItems.append(listItem);
 
         contentList->addItem(listItem);
         contentList->setItemWidget(listItem, container);
-
-        newItems.append(listItem);
     }
 
     // 批量添加并恢复UI更新
-    // 修改为:
-    for(auto* item : newItems) {
-        contentList->addItem(item);
-    }
     contentList->setUpdatesEnabled(true);
     contentList->update();
 }
+
 
 // 辅助函数
 QLabel* MainWindow::createImageLabel(const QPixmap& image) {
@@ -713,4 +707,120 @@ void MainWindow::onSaveButtonClicked() {
     if (index >= 0 && index < items.size()) {
         saveContent(items[index]);
     }
+}
+
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+    event->ignore();  // 先忽略关闭事件
+    auto* dialog = new CustomDialog(CustomDialog::DialogType::CloseConfirm, this);
+    dialog->move(this->geometry().center() - dialog->rect().center());
+
+    connect(dialog, &CustomDialog::saveAndClose, this, [this]() {
+        shouldSaveHistory = true;
+        saveHistoryToStorage();
+        setAttribute(Qt::WA_DontShowOnScreen);
+        close();
+        QRect screenGeometry = QGuiApplication::primaryScreen()->availableGeometry();
+        move(screenGeometry.center() - rect().center());
+
+    });
+
+    connect(dialog, &CustomDialog::closeWithoutSave, this, [this]() {
+        shouldSaveHistory = false;
+        setAttribute(Qt::WA_DontShowOnScreen);
+        close();
+        QRect screenGeometry = QGuiApplication::primaryScreen()->availableGeometry();
+        move(screenGeometry.center() - rect().center());
+    });
+
+    dialog->exec();
+    // 这里不需要删除dialog，因为他已经被deleteOnClose了
+}
+
+
+void MainWindow::saveHistoryToStorage() {
+    if (!shouldSaveHistory) return;
+
+    QList<StorageManager::ClipboardData> storageItems;
+    int count = 0;
+
+    for (const auto& item : items) {
+        if (count >= MAX_HISTORY_ITEMS) {
+            showHistoryLimitWarning();
+            break;
+        }
+
+        StorageManager::ClipboardData storageItem;
+        if (convertToStorageItem(item, storageItem)) {
+            storageItems.append(std::move(storageItem));
+            count++;
+        }
+    }
+
+    if (!storageManager->saveHistory(storageItems)) {
+        qDebug() << "保存历史记录失败:" << storageManager->getLastError();
+        showToast("保存历史记录失败");
+    }
+}
+
+void MainWindow::loadHistoryFromStorage() {
+    items.clear();
+    auto storageItems = storageManager->loadHistory();
+
+    for (const auto& storageItem : storageItems) {
+        ClipboardItem item;
+        if (convertFromStorageItem(storageItem, item)) {
+            items.append(std::move(item));
+        }
+    }
+
+    if (items.size() >= MAX_HISTORY_ITEMS) {
+        showHistoryLimitWarning();
+    }
+
+    updateList();
+}
+
+bool MainWindow::convertToStorageItem(const ClipboardItem& source, StorageManager::ClipboardData& target) {
+    try {
+        target.type = (source.type == ClipboardItem::Text) ?
+                          StorageManager::ClipboardData::Text :
+                          StorageManager::ClipboardData::Image;
+        target.text = source.text;
+        target.image = source.image;
+        target.timestamp = source.timestamp;
+
+        if (source.type == ClipboardItem::Image) {
+            target.hash = getImageHash(source.image);
+        }
+
+        return true;
+    } catch (const std::exception& e) {
+        qDebug() << "转换到存储项目失败:" << e.what();
+        return false;
+    }
+}
+
+bool MainWindow::convertFromStorageItem(const StorageManager::ClipboardData& source, ClipboardItem& target) {
+    try {
+        target.type = (source.type == StorageManager::ClipboardData::Text) ?
+                          ClipboardItem::Text :
+                          ClipboardItem::Image;
+        target.text = source.text;
+        target.image = source.image;
+        target.timestamp = source.timestamp;
+
+        return true;
+    } catch (const std::exception& e) {
+        qDebug() << "从存储项目转换失败:" << e.what();
+        return false;
+    }
+}
+
+
+
+void MainWindow::showHistoryLimitWarning() {
+    auto* dialog = new CustomDialog(CustomDialog::DialogType::HistoryLimit, this);
+    dialog->move(this->geometry().center() - dialog->rect().center());
+    dialog->show();
 }

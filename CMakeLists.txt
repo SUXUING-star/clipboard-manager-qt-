@@ -15,7 +15,15 @@ find_package(Qt6 REQUIRED COMPONENTS
 
 # 编译优化：使用 Release 模式，启用 O3 优化并剔除调试信息
 set(CMAKE_BUILD_TYPE Release)
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -s")
+# 根据不同的编译器设置优化标志
+if(MSVC)
+    # MSVC 编译器优化选项
+    set(CMAKE_CXX_FLAGS_RELEASE "/O2 /Ob2 /DNDEBUG")
+else()
+    # GCC/Clang 编译器优化选项
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -s")
+endif()
+
 
 # 添加可执行文件
 add_executable(clipboard_manager
@@ -29,6 +37,10 @@ add_executable(clipboard_manager
     components/autostartmanager.cpp
     components/downloadmanager.cpp
     components/downloadmanager.h
+    components/storagemanager.h
+    components/storagemanager.cpp
+    components/ui/customdialog.h
+    components/ui/customdialog.cpp
 )
 
 # 仅链接所需的 Qt 库
